@@ -67,4 +67,3 @@ python tests\test_end_to_end.py
 ```
 
 The check starts a temporary API process with a temporary SQLite database and temporary upload/output folders. It does not modify the main project database.
-
