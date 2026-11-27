@@ -3,7 +3,10 @@ import requests
 import streamlit as st
 
 
-API_URL = os.getenv("SKILLPATH_API_URL", "http://127.0.0.1:8000").rstrip("/")
+# Render runs the frontend and API as separate services. In production,
+# localhost would point back to Streamlit, not to the FastAPI service.
+DEFAULT_API_URL = "https://skillpath-ai-api-demo.onrender.com"
+API_URL = os.getenv("SKILLPATH_API_URL", DEFAULT_API_URL).strip().rstrip("/")
 st.set_page_config(page_title="SkillPath AI", page_icon="🎓", layout="wide")
 
 
@@ -15,11 +18,37 @@ def api(method: str, path: str, **kwargs):
     try:
         response = requests.request(method, f"{API_URL}{path}", headers=headers, timeout=30, **kwargs)
         if not response.ok:
+            # FastAPI normally returns JSON errors. A proxy/platform failure
+            # (for example Render HTTP 502) may instead return a complete HTML
+            # document. Do not dump that HTML into the Streamlit page.
+            detail = None
             try:
-                detail = response.json().get("detail", response.text)
+                payload = response.json()
+                if isinstance(payload, dict):
+                    detail = payload.get("detail") or payload.get("message")
+                elif isinstance(payload, str):
+                    detail = payload
             except ValueError:
-                detail = response.text
-            st.error(f"{detail}")
+                pass
+
+            if not detail:
+                content_type = response.headers.get("content-type", "").lower()
+                body_start = response.text.lstrip()[:100].lower()
+                is_html = "text/html" in content_type or body_start.startswith(
+                    ("<!doctype html", "<html", "<head", "<body")
+                )
+                if is_html:
+                    detail = (
+                        "The API gateway returned an HTML error page "
+                        f"(HTTP {response.status_code}). The backend may be "
+                        "starting, sleeping, or temporarily unavailable. "
+                        "Please retry in 30–60 seconds. If it continues, "
+                        "check the FastAPI service logs on Render."
+                    )
+                else:
+                    detail = response.text.strip()[:500] or "The API returned an empty error response."
+
+            st.error(f"API request failed ({response.status_code}): {detail}")
             return None
         if "application/json" in response.headers.get("content-type", ""):
             return response.json()
